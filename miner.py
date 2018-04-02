@@ -1,3 +1,7 @@
+#!/usr/bin/env python2
+
+from __future__ import print_function, division
+
 import urllib2
 import json
 from hashlib import sha256 as H
@@ -40,7 +44,11 @@ def solve_block(b):
         ciphers = compute_ciphers(b)
         #   Parse the ciphers as big-endian unsigned integers
         Ai, Aj, Bi, Bj = [unpack_uint128(cipher) for cipher in ciphers]
-        #   TODO: Verify PoW
+
+        MSK = (1 << 128) - 1
+        dist = bin(((Ai + Bj) & MSK) ^ ((Aj + Bi) & MSK)).count('1')
+        if dist <= 128 - d:
+            return
 
 
 def main():
@@ -51,7 +59,7 @@ def main():
     We will construct a block dictionary and pass this around to solving and
     submission functions.
     """
-    block_contents = "staff"
+    block_contents = "andrewhe,baula,werryju"
     while True:
         #   Next block's parent, version, difficulty
         next_header = get_next()
@@ -59,8 +67,8 @@ def main():
         #   head of the main chain
         new_block = make_block(next_header, block_contents)
         #   Solve the POW
-        print "Solving block..."
-        print new_block
+        print("Solving block...")
+        print(new_block)
         solve_block(new_block)
         #   Send to the server
         add_block(new_block, block_contents)
@@ -89,10 +97,10 @@ def add_block(h, contents):
             block:          string
     """
     add_block_request = {"header": h, "block": contents}
-    print "Sending block to server..."
-    print json.dumps(add_block_request)
+    print("Sending block to server...")
+    print(json.dumps(add_block_request))
     r = requests.post(NODE_URL + "/add", data=json.dumps(add_block_request))
-    print r
+    print(r)
 
 
 def hash_block_to_hex(b):
@@ -115,7 +123,7 @@ def hash_block_to_hex(b):
         packed_data.extend(pack('>Q', long(n)))
     packed_data.append(chr(b["version"]))
     if len(packed_data) != 105:
-        print "invalid length of packed data"
+        print("invalid length of packed data")
     h = H()
     h.update(''.join(packed_data))
     b["hash"] = h.digest().encode('hex')
@@ -135,13 +143,13 @@ def compute_ciphers(b):
     packed_data.extend(pack('>Q', long(b["nonces"][0])))
     packed_data.append(chr(b["version"]))
     if len(packed_data) != 89:
-        print "invalid length of packed data"
+        print("invalid length of packed data")
     h = H()
     h.update(''.join(packed_data))
     seed = h.digest()
 
     if len(seed) != 32:
-        print "invalid length of packed data"
+        print("invalid length of packed data")
     h = H()
     h.update(seed)
     seed2 = h.digest()
