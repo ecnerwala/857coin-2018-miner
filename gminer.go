@@ -237,16 +237,19 @@ func (h *BlockHeader) SolveNonces(ctx context.Context) error {
 
 var contents = "andrewhe,baula,werryju"
 var timeout = 90 * time.Second
+var pollTime = 30 * time.Second
 var numProcs = 4
 
 func TryMine() {
 	var next *BlockHeader
 	var err error
 
-	// TODO: Poll maybe?
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	next, err = GetNext()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("GetNext failed:", err)
 		return
 	}
 
@@ -254,11 +257,28 @@ func TryMine() {
 		panic("Unknown version!")
 	}
 
+	// Poll for new versions of next as we're running
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pollTime):
+			}
+			newNext, err := GetNext()
+			if err != nil {
+				continue
+			}
+			if *newNext != *next {
+				fmt.Println("Found newer head", newNext)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Spin up numProcs different processes trying different headers
 	ch := make(chan *BlockHeader)
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
 	waitGroup := sync.WaitGroup{}
 	for proc := 0; proc < numProcs; proc++ {
 		header := *next
@@ -282,7 +302,7 @@ func TryMine() {
 
 			err := header.SolveNonces(ctx)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("Solve failed:", err)
 				return
 			}
 
@@ -316,7 +336,8 @@ func TryMine() {
 
 	err = header.Verify()
 	if err != nil {
-		fmt.Println("Verification failed: %v, sending anyways", err)
+		fmt.Println("Verification failed:", err)
+		fmt.Println("Sending anyways")
 	} else {
 		fmt.Println("Verification passed")
 	}
@@ -327,11 +348,11 @@ func TryMine() {
 
 	err = SendBlock(block)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("SendBlock failed:", err)
 		return
 	}
 
-	fmt.Printf("Success!\n")
+	fmt.Println("Success!")
 }
 
 func main() {
