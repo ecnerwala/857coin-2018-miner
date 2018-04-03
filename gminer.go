@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -76,7 +77,7 @@ func GetNext() (*BlockHeader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Bad response: %v; Body could not be read: %v", resp.Status, err)
 		}
-		return nil, fmt.Errorf("Bad response: %v; Body: %v", resp.Status, string(body))
+		return nil, fmt.Errorf("Bad response: %v; Body: %v", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	next := &BlockHeader{}
@@ -95,6 +96,8 @@ func SendBlock(b *Block) error {
 		return err
 	}
 
+	fmt.Println("POST", "/add", strings.TrimSpace(string(buf.Bytes())))
+
 	resp, err := http.Post(ServerURL+"/add", "application/json", buf)
 	if err != nil {
 		return err
@@ -106,7 +109,7 @@ func SendBlock(b *Block) error {
 		if err != nil {
 			return fmt.Errorf("Bad response: %v; Body could not be read: %v", resp.Status, err)
 		}
-		return fmt.Errorf("Bad response: %v; Body: %v", resp.Status, string(body))
+		return fmt.Errorf("Bad response: %v; Body: %v", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	return nil
@@ -185,7 +188,7 @@ func (h *BlockHeader) SolveNonces(ctx context.Context) error {
 }
 
 var contents = "andrewhe,baula,werryju"
-var timeout = 60 * time.Second
+var timeout = 90 * time.Second
 
 func main() {
 	var next *BlockHeader
