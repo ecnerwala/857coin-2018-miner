@@ -11,4 +11,7 @@ all: aesham2 aesham2.s gminer
 clean:
 	rm -rf aesham2 aesham2.s gminer
 
-.PHONY: all clean
+mine: all
+	./gminer
+
+.PHONY: all clean mine
