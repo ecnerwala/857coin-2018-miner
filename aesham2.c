@@ -18,7 +18,7 @@ bool __get_cpuid_aes() {
     return (bool) (c & bit_AES);
 }
 
-inline int popcount128(__int128_t v) {
+inline int popcount128(__uint128_t v) {
     uint64_t *a = (uint64_t *) &v;
     return __builtin_popcountll(a[0]) + __builtin_popcountll(a[1]);
 }
@@ -59,7 +59,7 @@ inline void aes_keygen(__m128i rk[], const void* cipherKey) {
     rk[14] = KEYEXP256(rk[12], rk[13], 0x40);
 }
 
-inline void aes_encrypt_num(__m128i ek[], uint64_t in, __int128_t* out) {
+inline void aes_encrypt_num(__m128i ek[], uint64_t in, __uint128_t* out) {
     assert(IS_ALIGNED(out, 16));
     // Confusingly, this uses little-endian, so we have to reverse all our numbers as we insert them
     in = __builtin_bswap64(in);
@@ -88,7 +88,7 @@ inline void aes_encrypt_num(__m128i ek[], uint64_t in, __int128_t* out) {
 }
 
 #define BUCKET_SIZE (1 << 20)
-__int128_t cache[BUCKET_SIZE][2];
+__uint128_t cache[BUCKET_SIZE][2];
 void aesham2(const void* A, const void* B, int difficulty, uint64_t *N1, uint64_t *N2) {
     for (uint64_t start = 0; ; start += BUCKET_SIZE) {
         fprintf(stderr, "Computed from %" PRIu64 "\n", start);
@@ -131,7 +131,7 @@ void parse_hex(const char s[], uint8_t v[]) {
 }
 
 
-void print128(__int128_t val) {
+void print128(__uint128_t val) {
     uint8_t *v = (uint8_t *) &val;
     for (int i = 0; i < 16; i++) { fprintf(stderr, "%02x", v[i]); } fprintf(stderr, "\n");
 }
@@ -145,10 +145,10 @@ void test() {
     __m128i __attribute__((aligned(16))) ek[15];
     aes_keygen(ek, A);
 
-    __int128_t res;
+    __uint128_t res;
     aes_encrypt_num(ek, 1, &res);
 
-    __int128_t res2;
+    __uint128_t res2;
     aes_encrypt_num(ek, 2, &res2);
 
     print128(res);
