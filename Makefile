@@ -1,4 +1,4 @@
-CFLAGS += -maes -O2 -Wall -Wextra --std=c11 -march=native -mtune=native
+CFLAGS += -maes -O3 -Wall -Wextra --std=c11 -march=native -mtune=native
 
 all: aesham2 aesham2.s gminer
 
