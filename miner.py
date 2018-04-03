@@ -65,9 +65,9 @@ def solve_block(b):
                 return
 
         ABs.append((n1, Ai, Bi))
-
     """
-    proc = subprocess.Popen(['./aesham2'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    proc = subprocess.Popen(['./aesham2'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
     print("Starting solve on seeds:")
     print(seed1.hexdigest())
     print(seed2.hexdigest())
@@ -77,9 +77,25 @@ def solve_block(b):
     proc.stdin.close()
 
     proc.wait()
-    n1 = int(proc.stdout.readline())
-    n2 = int(proc.stdout.readline())
+    n1 = long(proc.stdout.readline())
+    n2 = long(proc.stdout.readline())
     b["nonces"][1:3] = [n1, n2]
+
+    # Verify
+    A = AES.new(seed1.digest())
+    B = AES.new(seed2.digest())
+    i = pack('>QQ', 0, long(b["nonces"][1]))
+    j = pack('>QQ', 0, long(b["nonces"][2]))
+    Ai = unpack_uint128(A.encrypt(i))
+    Aj = unpack_uint128(A.encrypt(j))
+    Bi = unpack_uint128(B.encrypt(i))
+    Bj = unpack_uint128(B.encrypt(j))
+    MSK = (1 << 128) - 1
+    dist = bin(((Ai + Bj) & MSK) ^ ((Aj + Bi) & MSK)).count('1')
+    if dist <= 128 - d:
+        print("Verification succeeded")
+    else:
+        print("Verification failed, submitting anyways")
 
 
 def main():

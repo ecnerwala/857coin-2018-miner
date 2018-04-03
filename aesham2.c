@@ -164,8 +164,6 @@ int main() {
         return 1;
     }
 
-    test();
-
     char seed1[100];
     char seed2[100];
     scanf(" %s", seed1);
@@ -178,8 +176,8 @@ int main() {
 
     parse_hex(seed1, A);
     parse_hex(seed2, B);
-    for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", A[i]); } fprintf(stderr, "\n");
-    for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", B[i]); } fprintf(stderr, "\n");
+    //for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", A[i]); } fprintf(stderr, "\n");
+    //for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", B[i]); } fprintf(stderr, "\n");
 
     int difficulty;
     scanf(" %d", &difficulty);
