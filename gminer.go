@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -236,23 +237,30 @@ func (h *BlockHeader) SolveNonces(ctx context.Context) error {
 
 var contents = "andrewhe,baula,werryju"
 var timeout = 90 * time.Second
+var numProcs = 4
 
-func main() {
+func TryMine() {
 	var next *BlockHeader
-	for {
-		var err error
+	var err error
 
-		// TODO: Poll maybe?
-		next, err = GetNext()
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	// TODO: Poll maybe?
+	next, err = GetNext()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-		if next.Version != 0 {
-			panic("Unknown version!")
-		}
+	if next.Version != 0 {
+		panic("Unknown version!")
+	}
 
+	ch := make(chan *BlockHeader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	waitGroup := sync.WaitGroup{}
+	for proc := 0; proc < numProcs; proc++ {
 		header := *next
 
 		header.SetContents(contents)
@@ -267,34 +275,67 @@ func main() {
 		fmt.Printf("%v\n", seed1)
 		fmt.Printf("%v\n", seed2)
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		err = header.SolveNonces(ctx)
+		waitGroup.Add(1)
+
+		go func() {
+			defer waitGroup.Done()
+
+			err := header.SolveNonces(ctx)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			select {
+			case <-ctx.Done():
+			case ch <- &header:
+			}
+		}()
+	}
+
+	allDone := make(chan struct{})
+	go func() {
+		waitGroup.Wait()
+		close(allDone)
+	}()
+
+	var header *BlockHeader
+	select {
+	case <-allDone:
+		fmt.Println("All processes failed")
+		return
+	case <-ctx.Done():
+		fmt.Println("Timed out, starting over")
+		return
+	case header = <-ch:
 		cancel()
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	}
 
-		fmt.Println("Solved block:")
-		fmt.Printf("%+v\n", header)
+	fmt.Println("Solved block:")
+	fmt.Printf("%+v\n", header)
 
-		err = header.Verify()
-		if err != nil {
-			fmt.Println("Verification failed: %v, sending anyways", err)
-		} else {
-			fmt.Println("Verification passed")
-		}
+	err = header.Verify()
+	if err != nil {
+		fmt.Println("Verification failed: %v, sending anyways", err)
+	} else {
+		fmt.Println("Verification passed")
+	}
 
-		fmt.Printf("Sending block...\n")
-		block := &Block{Header: header, Contents: contents}
-		fmt.Printf("%+v\n", block)
+	fmt.Printf("Sending block...\n")
+	block := &Block{Header: *header, Contents: contents}
+	fmt.Printf("%+v\n", block)
 
-		err = SendBlock(block)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	err = SendBlock(block)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-		fmt.Printf("Success!\n")
+	fmt.Printf("Success!\n")
+}
+
+func main() {
+	for {
+		TryMine()
 	}
 }
