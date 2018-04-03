@@ -89,34 +89,47 @@ inline void aes_encrypt_num(__m128i ek[], uint64_t in, __uint128_t* out) {
 
 #define BUCKET_SIZE (1 << 20)
 __uint128_t cache[BUCKET_SIZE][2];
-void aesham2(const void* A, const void* B, int difficulty, uint64_t *N1, uint64_t *N2) {
-    for (uint64_t start = 0; ; start += BUCKET_SIZE) {
-        fprintf(stderr, "Computed from %" PRIu64 "\n", start);
-        uint64_t end = start + BUCKET_SIZE;
-        {
-            // Perform the encryptions
-            __m128i __attribute__((aligned(16))) ek[15];
-            aes_keygen(ek, A);
-            for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-                aes_encrypt_num(ek, start + i, &cache[i][0]);
-            }
-            aes_keygen(ek, B);
-            for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-                aes_encrypt_num(ek, start + i, &cache[i][1]);
+void cache_aes(const void* A, const void* B, uint64_t start) {
+    fprintf(stderr, "Computed from %" PRIu64 "\n", start);
+
+    uint64_t end = start + BUCKET_SIZE;
+    {
+        // Perform the encryptions
+        __m128i __attribute__((aligned(16))) ek[15];
+        aes_keygen(ek, A);
+        for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
+            aes_encrypt_num(ek, start + i, &cache[i][0]);
+        }
+        aes_keygen(ek, B);
+        for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
+            aes_encrypt_num(ek, start + i, &cache[i][1]);
+        }
+    }
+
+    fprintf(stderr, "Computed up to %" PRIu64 "\n", end);
+}
+
+bool find_cache_collision(int difficulty, uint64_t *N1, uint64_t *N2) {
+    for (uint64_t i = 0; i < BUCKET_SIZE; i ++) {
+        for (uint64_t j = 0; j < i; j ++) {
+            int diff = popcount128((cache[i][0] + cache[j][1]) ^ (cache[j][0] + cache[i][1]));
+            if (diff <= 128 - difficulty) {
+                *N1 = j;
+                *N2 = i;
+                return true;
             }
         }
+    }
+    return false;
+}
 
-        fprintf(stderr, "Computed up to %" PRIu64 "\n", end);
-
-        for (uint64_t i = 0; i < BUCKET_SIZE; i ++) {
-            for (uint64_t j = 0; j < i; j ++) {
-                int diff = popcount128((cache[i][0] + cache[j][1]) ^ (cache[j][0] + cache[i][1]));
-                if (diff <= 128 - difficulty) {
-                    *N1 = j + start;
-                    *N2 = i + start;
-                    return;
-                }
-            }
+void aesham2(const void* A, const void* B, int difficulty, uint64_t *N1, uint64_t *N2) {
+    for (uint64_t start = 0; ; start += BUCKET_SIZE) {
+        cache_aes(A, B, start);
+        if (find_cache_collision(difficulty, N1, N2)) {
+            *N1 += start;
+            *N2 += start;
+            return;
         }
     }
 }
