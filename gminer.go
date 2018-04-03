@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"os"
@@ -152,9 +155,53 @@ func (h *BlockHeader) Seeds() (HexHash, HexHash) {
 	return seed1, seed2
 }
 
-func (h *BlockHeader) Verify() bool {
-	// TODO
-	return true
+func (h *BlockHeader) Verify() error {
+	seed1, seed2 := h.Seeds()
+	A, err := aes.NewCipher(seed1[:])
+	if err != nil {
+		return err
+	}
+	B, err := aes.NewCipher(seed2[:])
+	if err != nil {
+		return err
+	}
+
+	ibuf := &bytes.Buffer{}
+	binary.Write(ibuf, binary.BigEndian, uint64(0))
+	binary.Write(ibuf, binary.BigEndian, h.Nonces[1])
+	jbuf := &bytes.Buffer{}
+	binary.Write(jbuf, binary.BigEndian, uint64(0))
+	binary.Write(jbuf, binary.BigEndian, h.Nonces[2])
+
+	i := ibuf.Bytes()
+	j := jbuf.Bytes()
+
+	encryptToInt := func(cipher cipher.Block, block []byte) *big.Int {
+		ciph := make([]byte, len(block))
+		cipher.Encrypt(ciph, block)
+		return (&big.Int{}).SetBytes(ciph)
+	}
+
+	Ai := encryptToInt(A, i)
+	Aj := encryptToInt(A, j)
+	Bi := encryptToInt(B, i)
+	Bj := encryptToInt(B, j)
+
+	Ai.Add(Ai, Bj)
+	Aj.Add(Aj, Bi)
+
+	dist := uint64(0)
+	for p := 0; p < 128; p++ {
+		if Ai.Bit(p) != Aj.Bit(p) {
+			dist++
+		}
+	}
+
+	if !(dist <= 128-h.Difficulty) {
+		return fmt.Errorf("Distance was too large: %v > %v", dist, 128-h.Difficulty)
+	}
+
+	return nil
 }
 
 func (h *BlockHeader) SolveNonces(ctx context.Context) error {
@@ -226,6 +273,16 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 			continue
+		}
+
+		fmt.Println("Solved block:")
+		fmt.Printf("%+v\n", header)
+
+		err = header.Verify()
+		if err != nil {
+			fmt.Println("Verification failed: %v, sending anyways", err)
+		} else {
+			fmt.Println("Verification passed")
 		}
 
 		fmt.Printf("Sending block...\n")
