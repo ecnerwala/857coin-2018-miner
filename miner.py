@@ -38,17 +38,28 @@ def solve_block(b):
 
     """
     d = b["difficulty"]
+    b["nonces"] = [rand_nonce()]
+    A, B = compute_ciphers(b)
+    ABs = []
     while True:
-        b["nonces"] = [rand_nonce() for i in range(3)]
-        #   Compute Ai, Aj, Bi, Bj
-        ciphers = compute_ciphers(b)
-        #   Parse the ciphers as big-endian unsigned integers
-        Ai, Aj, Bi, Bj = [unpack_uint128(cipher) for cipher in ciphers]
+        n1 = rand_nonce()
+        i = pack('>QQ', 0, long(n1))
 
-        MSK = (1 << 128) - 1
-        dist = bin(((Ai + Bj) & MSK) ^ ((Aj + Bi) & MSK)).count('1')
-        if dist <= 128 - d:
-            return
+        # TODO: make sure n1 != n2... in the unlikely event
+
+        #   Compute Ai, Bi
+        #   Parse the ciphers as big-endian unsigned integers
+        Ai = unpack_uint128(A.encrypt(i))
+        Bi = unpack_uint128(B.encrypt(i))
+
+        for n2, Aj, Bj in ABs:
+            MSK = (1 << 128) - 1
+            dist = bin(((Ai + Bj) & MSK) ^ ((Aj + Bi) & MSK)).count('1')
+            if dist <= 128 - d:
+                b["nonces"][1:3] = [n1, n2]
+                return
+
+        ABs.append((n1, Ai, Bi))
 
 
 def main():
@@ -132,7 +143,7 @@ def hash_block_to_hex(b):
 
 def compute_ciphers(b):
     """
-    Computes the ciphers Ai, Aj, Bi, Bj of a block header.
+    Computes the AES cipher objects A, B of a block header.
     """
 
     packed_data = []
@@ -157,15 +168,7 @@ def compute_ciphers(b):
     A = AES.new(seed)
     B = AES.new(seed2)
 
-    i = pack('>QQ', 0, long(b["nonces"][1]))
-    j = pack('>QQ', 0, long(b["nonces"][2]))
-
-    Ai = A.encrypt(i)
-    Aj = A.encrypt(j)
-    Bi = B.encrypt(i)
-    Bj = B.encrypt(j)
-
-    return Ai, Aj, Bi, Bj
+    return A, B
 
 
 def unpack_uint128(x):
