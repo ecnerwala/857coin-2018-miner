@@ -10,6 +10,7 @@ from Crypto.Random import random
 import time
 from struct import pack, unpack
 import requests
+import subprocess
 
 NODE_URL = "http://6857coin.csail.mit.edu"
 
@@ -39,7 +40,11 @@ def solve_block(b):
     """
     d = b["difficulty"]
     b["nonces"] = [rand_nonce()]
-    A, B = compute_ciphers(b)
+    seed1, seed2 = compute_seeds(b)
+
+    """
+    A = AES.new(seed1.digest())
+    B = AES.new(seed2.digest())
     ABs = []
     while True:
         n1 = rand_nonce()
@@ -60,6 +65,21 @@ def solve_block(b):
                 return
 
         ABs.append((n1, Ai, Bi))
+
+    """
+    proc = subprocess.Popen(['./aesham2'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print("Starting solve on seeds:")
+    print(seed1.hexdigest())
+    print(seed2.hexdigest())
+    proc.stdin.write(seed1.hexdigest() + '\n')
+    proc.stdin.write(seed2.hexdigest() + '\n')
+    proc.stdin.write(str(d) + '\n')
+    proc.stdin.close()
+
+    proc.wait()
+    n1 = int(proc.stdout.readline())
+    n2 = int(proc.stdout.readline())
+    b["nonces"][1:3] = [n1, n2]
 
 
 def main():
@@ -112,6 +132,8 @@ def add_block(h, contents):
     print(json.dumps(add_block_request))
     r = requests.post(NODE_URL + "/add", data=json.dumps(add_block_request))
     print(r)
+    if r.status_code != requests.codes.ok:
+        print(r.content)
 
 
 def hash_block_to_hex(b):
@@ -141,9 +163,9 @@ def hash_block_to_hex(b):
     return b["hash"]
 
 
-def compute_ciphers(b):
+def compute_seeds(b):
     """
-    Computes the AES cipher objects A, B of a block header.
+    Computes the AES keys seed1, seed2 of a block header.
     """
 
     packed_data = []
@@ -157,18 +179,17 @@ def compute_ciphers(b):
         print("invalid length of packed data")
     h = H()
     h.update(''.join(packed_data))
-    seed = h.digest()
+    seed = h
 
-    if len(seed) != 32:
+    data2 = seed.digest()
+
+    if len(data2) != 32:
         print("invalid length of packed data")
     h = H()
-    h.update(seed)
-    seed2 = h.digest()
+    h.update(data2)
+    seed2 = h
 
-    A = AES.new(seed)
-    B = AES.new(seed2)
-
-    return A, B
+    return seed, seed2
 
 
 def unpack_uint128(x):
