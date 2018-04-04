@@ -206,15 +206,14 @@ func (h *BlockHeader) Verify() error {
 }
 
 func (h *BlockHeader) SolveNonces(ctx context.Context) error {
-	c := exec.CommandContext(ctx, "./aesham2")
-
-	stdin := &bytes.Buffer{}
 	seed1, seed2 := h.Seeds()
-	fmt.Fprintf(stdin, "%x\n", seed1[:])
-	fmt.Fprintf(stdin, "%x\n", seed2[:])
 	difficulty := h.Difficulty
-	fmt.Fprintf(stdin, "%d\n", difficulty)
-	c.Stdin = stdin
+	args := []string{
+		fmt.Sprintf("%x", seed1[:]),
+		fmt.Sprintf("%x", seed2[:]),
+		fmt.Sprintf("%d", difficulty),
+	}
+	c := exec.CommandContext(ctx, "./aesham2", args...)
 
 	c.Stderr = os.Stdout
 

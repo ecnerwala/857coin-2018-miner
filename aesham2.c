@@ -92,6 +92,8 @@ uint8_t B[32] __attribute__((aligned(16)));
 
 #define BUCKET_SIZE (1 << 20)
 __uint128_t cache[BUCKET_SIZE][2] __attribute__((aligned(64)));
+uint64_t nonces[BUCKET_SIZE];
+
 void cache_aes(uint64_t start) {
     fprintf(stderr, "Computed from %" PRIu64 "\n", start);
 
@@ -109,62 +111,57 @@ void cache_aes(uint64_t start) {
         }
     }
 
+    for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
+        nonces[i] = start + i;
+    }
+
     fprintf(stderr, "Computed up to %" PRIu64 "\n", end);
 }
 
 int difficulty;
-uint64_t N1, N2;
 
-inline bool check_points(uint64_t i, uint64_t j) {
+inline void check_points(uint64_t i, uint64_t j) {
     int diff = popcount128((cache[i][0] + cache[j][1]) ^ (cache[j][0] + cache[i][1]));
     if (diff <= 128 - difficulty) {
-        N1 = j;
-        N2 = i;
-        return true;
+        uint64_t N1 = nonces[j], N2 = nonces[i];
+        printf("%" PRIu64 "\n", N1);
+        printf("%" PRIu64 "\n", N2);
+        exit(0);
     }
-    return false;
 }
 
-inline bool find_cache_collision_flat(uint64_t si, uint64_t sj, uint64_t n) {
-    if (si < sj) return false;
+inline void find_collision_flat(uint64_t si, uint64_t sj, uint64_t n) {
+    if (si < sj) return;
     for (uint64_t i = 0; i < n; i ++) {
         for (uint64_t j = 0; j < ((si == sj) ? i : n); j ++) {
-            if (check_points(si + i, sj + j)) {
-                return true;
-            }
+            check_points(si + i, sj + j);
         }
     }
-    return false;
 }
 
-bool find_cache_collision_recursive(uint64_t si, uint64_t sj, uint64_t n) {
-    if (si < sj) return false;
+void find_collision_recursive(uint64_t si, uint64_t sj, uint64_t n) {
+    if (si < sj) return;
     if (n <= (1 << 10)) {
-        return find_cache_collision_flat(si, sj, n);
+        return find_collision_flat(si, sj, n);
     }
 
     n /= 2;
-    if (find_cache_collision_recursive(si, sj, n)) return true;
-    if (find_cache_collision_recursive(si + n, sj, n)) return true;
-    if (find_cache_collision_recursive(si, sj + n, n)) return true;
-    if (find_cache_collision_recursive(si + n, sj + n, n)) return true;
-    return false;
+    find_collision_recursive(si, sj, n);
+    find_collision_recursive(si + n, sj, n);
+    find_collision_recursive(si, sj + n, n);
+    find_collision_recursive(si + n, sj + n, n);
 }
 
-bool find_cache_collision() {
+void find_collision() {
     // TODO: parallelize
-    return find_cache_collision_recursive(0, 0, BUCKET_SIZE);
+    find_collision_recursive(0, 0, BUCKET_SIZE);
 }
 
 
 void aesham2() {
     for (uint64_t start = 0; ; start += BUCKET_SIZE) {
         cache_aes(start);
-        if (find_cache_collision()) {
-            N1 += start;
-            N2 += start;
-            return;
-        }
+        find_collision();
     }
 }
 
@@ -185,7 +182,6 @@ void print128(__uint128_t val) {
 
 
 void test() {
-    uint8_t A[32] __attribute__((aligned(16)));
     memset(A, 0, sizeof(A));
     A[0] = 1;
 
@@ -205,24 +201,25 @@ void test() {
 }
 
 
-int main() {
+int main(int argc, char *argv[]) {
     if (!__get_cpuid_aes()) {
-        fprintf(stderr, "AES-NI not supported!");
+        fprintf(stderr, "AES-NI not supported on this CPU!\n");
         return 1;
     }
 
-    char seed1[100];
-    char seed2[100];
-    scanf(" %s", seed1);
-    scanf(" %s", seed2);
+    if (argc != 4) {
+        printf("Usage: aesham2 SEED SEED2 DIFFICULTY\n");
+        return 1;
+    }
+
+    char *seed1 = argv[1];
+    char *seed2 = argv[2];
     parse_hex(seed1, A);
     parse_hex(seed2, B);
     //for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", A[i]); } fprintf(stderr, "\n");
     //for (int i = 0; i < 32; i++) { fprintf(stderr, "%02x", B[i]); } fprintf(stderr, "\n");
 
-    scanf(" %d", &difficulty);
+    difficulty = atoi(argv[3]);
 
     aesham2();
-    printf("%" PRIu64 "\n", N1);
-    printf("%" PRIu64 "\n", N2);
 }
