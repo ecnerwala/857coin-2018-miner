@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/big"
@@ -419,11 +420,16 @@ func MineOn(start HexHash, difficulty uint64) {
 }
 
 func main() {
-	MineNext()
-	/*
-	MineOn(
-		*MustDecodeHex("5ea33706fd2aff95b66e3f21e9d633474752ee4930aed2850ce3c4da2688a1b8"),
-		102,
-	)
-	*/
+	base := flag.String("base", "", "Previous block ID to build a chain on")
+	difficulty := flag.Uint64("difficulty", 86, "Difficulty to mine at")
+	flag.Parse()
+
+	if *base != "" {
+		MineOn(
+			*MustDecodeHex(*base),
+			*difficulty,
+		)
+	} else {
+		MineNext()
+	}
 }

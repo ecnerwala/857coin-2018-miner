@@ -13,7 +13,7 @@ clean:
 	rm -rf aesham2 aesham2.s gminer
 
 mine: all
-	./gminer
+	./gminer $(ARGS)
 
 money: mine
 
