@@ -136,6 +136,25 @@ func (h *BlockHeader) SetNonce12(n1, n2 uint64) {
 	h.Nonces[2] = n2
 }
 
+func (h *BlockHeader) Id() HexHash {
+	buf := &bytes.Buffer{}
+	buf.Write(h.ParentId[:])
+	buf.Write(h.Root[:])
+	binary.Write(buf, binary.BigEndian, h.Difficulty)
+	binary.Write(buf, binary.BigEndian, h.Timestamp)
+	binary.Write(buf, binary.BigEndian, h.Nonces[0])
+	binary.Write(buf, binary.BigEndian, h.Nonces[1])
+	binary.Write(buf, binary.BigEndian, h.Nonces[2])
+	binary.Write(buf, binary.BigEndian, h.Version)
+
+	data := buf.Bytes()
+	if len(data) != 105 {
+		panic("Invalid buffer length")
+	}
+
+	return NewHexHash(data)
+}
+
 func (h *BlockHeader) Seeds() (HexHash, HexHash) {
 	buf := &bytes.Buffer{}
 	buf.Write(h.ParentId[:])
@@ -205,7 +224,7 @@ func (h *BlockHeader) Verify() error {
 	return nil
 }
 
-func (h *BlockHeader) SolveNonces(ctx context.Context) error {
+func (h *BlockHeader) RunSolver(ctx context.Context) error {
 	seed1, seed2 := h.Seeds()
 	difficulty := h.Difficulty
 	args := []string{
@@ -239,48 +258,21 @@ var timeout = 90 * time.Second
 var pollTime = 30 * time.Second
 var numProcs = 1
 
-func TryMine() {
-	var next *BlockHeader
+func TryMine(ctx context.Context, template *BlockHeader) (*BlockHeader, error) {
 	var err error
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	next, err = GetNext()
-	if err != nil {
-		fmt.Println("GetNext failed:", err)
-		return
-	}
-
-	if next.Version != 0 {
+	if template.Version != 0 {
 		panic("Unknown version!")
 	}
-
-	// Poll for new versions of next as we're running
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(pollTime):
-			}
-			newNext, err := GetNext()
-			if err != nil {
-				continue
-			}
-			if *newNext != *next {
-				fmt.Println("Found newer head", newNext)
-				cancel()
-				return
-			}
-		}
-	}()
 
 	// Spin up numProcs different processes trying different headers
 	ch := make(chan *BlockHeader)
 	waitGroup := sync.WaitGroup{}
 	for proc := 0; proc < numProcs; proc++ {
-		header := *next
+		header := *template
 
 		header.SetContents(contents)
 		header.SetNonce0(rand.Uint64())
@@ -299,7 +291,7 @@ func TryMine() {
 		go func() {
 			defer waitGroup.Done()
 
-			err := header.SolveNonces(ctx)
+			err := header.RunSolver(ctx)
 			if err != nil {
 				fmt.Println("Solve failed:", err)
 				return
@@ -322,12 +314,11 @@ func TryMine() {
 	select {
 	case <-allDone:
 		fmt.Println("All processes failed")
-		return
+		return nil, fmt.Errorf("Try again")
 	case <-ctx.Done():
 		fmt.Println("Timed out, starting over")
-		return
+		return nil, fmt.Errorf("Try again")
 	case header = <-ch:
-		cancel()
 	}
 
 	fmt.Println("Solved block:")
@@ -348,14 +339,91 @@ func TryMine() {
 	err = SendBlock(block)
 	if err != nil {
 		fmt.Println("SendBlock failed:", err)
-		return
+		return nil, fmt.Errorf("SendBlock failed: %v", err)
 	}
 
 	fmt.Println("Success!")
+	fmt.Println("New block ID:", header.Id())
+
+	return header, nil
+}
+
+func TryMineNext() {
+	var next *BlockHeader
+	var err error
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	next, err = GetNext()
+	if err != nil {
+		fmt.Println("GetNext failed:", err)
+		return
+	}
+
+	// Poll for new versions of next as we're running
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pollTime):
+			}
+			newNext, err := GetNext()
+			if err != nil {
+				continue
+			}
+			if *newNext != *next {
+				fmt.Println("Found newer head", newNext)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	TryMine(ctx, next)
+}
+
+func MustDecodeHex(s string) *HexHash {
+	res := &HexHash{}
+	if err := res.UnmarshalText([]byte(s)); err != nil {
+		panic(err)
+	}
+	return res
+}
+
+func MineNext() {
+	for {
+		TryMineNext()
+	}
+}
+
+func MineOn(start HexHash, difficulty uint64) {
+	template := &BlockHeader{
+		ParentId: start,
+		Difficulty: difficulty,
+	}
+	for {
+		next, err := TryMine(context.Background(), template)
+		if err != nil {
+			if strings.Contains(err.Error(), "invalid difficulty") {
+				template.Difficulty += 2
+			}
+			continue
+		}
+		template = &BlockHeader{
+			ParentId: next.Id(),
+			Difficulty: template.Difficulty,
+		}
+	}
 }
 
 func main() {
-	for {
-		TryMine()
-	}
+	MineNext()
+	/*
+	MineOn(
+		*MustDecodeHex("5ea33706fd2aff95b66e3f21e9d633474752ee4930aed2850ce3c4da2688a1b8"),
+		102,
+	)
+	*/
 }
