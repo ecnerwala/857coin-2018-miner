@@ -237,7 +237,7 @@ func (h *BlockHeader) SolveNonces(ctx context.Context) error {
 var contents = "andrewhe,baula,werryju"
 var timeout = 90 * time.Second
 var pollTime = 30 * time.Second
-var numProcs = 4
+var numProcs = 1
 
 func TryMine() {
 	var next *BlockHeader

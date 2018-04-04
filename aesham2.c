@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include <cpuid.h>
 #include <wmmintrin.h>
@@ -87,35 +88,91 @@ inline void aes_encrypt_num(__m128i ek[], uint64_t in, __uint128_t* out) {
     res[1] = __builtin_bswap64(res[1]);
 }
 
+inline uint64_t low64(const __uint128_t *v) {
+    return *(const uint64_t *)(v);
+}
+
 uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
-#define BUCKET_SIZE (1 << 20)
-__uint128_t aes[BUCKET_SIZE][2] __attribute__((aligned(64)));
-uint64_t nonces[BUCKET_SIZE];
+#define MEM_BITS 24
+#define FILTER_BITS 0
+#define BUCKET_BITS 16
 
-void compute_aes(uint64_t start) {
-    fprintf(stderr, "Computed from %" PRIu64 "\n", start);
+#define FILTER_MASK (((1 << FILTER_BITS) - 1) << BUCKET_BITS)
+#define BUCKET_MASK ((1 << BUCKET_BITS) - 1)
+#define NUM_BUCKETS (1 << BUCKET_BITS)
+#define MEM_SIZE (1 << MEM_BITS)
+__uint128_t aes[MEM_SIZE][2] __attribute__((aligned(4096)));
+uint64_t nonces[MEM_SIZE];
 
-    uint64_t end = start + BUCKET_SIZE;
-    {
+__uint128_t aes2[MEM_SIZE][2] __attribute__((aligned(4096)));
+uint64_t nonces2[MEM_SIZE];
+uint64_t buckets[MEM_SIZE];
+
+size_t bucket_locs[NUM_BUCKETS+1];
+
+// BENCHMARKS: Computing 1<<25 AES pairs takes around 1.3 seconds
+// 1 << 24 .. 1 << 25 starts to be throughput limited (and hit memory caps)
+// Computing 1 << 16 choose 2 pairs takes about 5.2 seconds
+// 1 << 15 .. 1 << 16 starts to become actually throughput limited
+// That means about 1 << 18 choose 2 pairs in 2 minutes
+
+uint64_t next_nonce;
+
+void compute_aes() {
+    fprintf(stderr, "Computed from %" PRIu64 "\n", next_nonce);
+
+    memset(bucket_locs, 0, sizeof(bucket_locs));
+
+    for (size_t j = 0; j < MEM_SIZE; ) {
         // Perform the encryptions
         __m128i __attribute__((aligned(16))) ek[15];
         aes_keygen(ek, A);
-        for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-            aes_encrypt_num(ek, start + i, &aes[i][0]);
+        for (size_t i = 0; i < MEM_SIZE; i++) {
+            aes_encrypt_num(ek, next_nonce + i, &aes[i][0]);
         }
         aes_keygen(ek, B);
-        for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-            aes_encrypt_num(ek, start + i, &aes[i][1]);
+        for (size_t i = 0; i < MEM_SIZE; i++) {
+            aes_encrypt_num(ek, next_nonce + i, &aes[i][1]);
         }
+
+        for (size_t i = 0; i < MEM_SIZE && j < MEM_SIZE; i++) {
+            uint64_t diff = low64(&aes[i][0]) - low64(&aes[i][1]);
+            if ((diff & FILTER_MASK) == 0) {
+                aes2[j][0] = aes[i][0];
+                aes2[j][1] = aes[i][1];
+                nonces2[j] = next_nonce + i;
+                buckets[j] = diff & BUCKET_MASK;
+                bucket_locs[buckets[j]+1] ++;
+                j++;
+            }
+        }
+
+        next_nonce += MEM_SIZE;
     }
 
-    for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-        nonces[i] = start + i;
+    for (size_t b = 0; b < NUM_BUCKETS; b ++) {
+        bucket_locs[b+1] += bucket_locs[b];
+    }
+    assert(bucket_locs[NUM_BUCKETS] == MEM_SIZE);
+
+    for (size_t i = 0; i < MEM_SIZE; i++) {
+        size_t j = bucket_locs[buckets[i]] ++;
+        aes[j][0] = aes2[i][0];
+        aes[j][1] = aes2[i][1];
+        nonces[j] = nonces2[i];
     }
 
-    fprintf(stderr, "Computed up to %" PRIu64 "\n", end);
+    // Reset bucket_locs for future use
+    for(size_t b = NUM_BUCKETS; b > 0; b--) {
+        bucket_locs[b] = bucket_locs[b-1];
+    }
+    bucket_locs[0] = 0;
+
+    assert(bucket_locs[NUM_BUCKETS] == MEM_SIZE);
+
+    fprintf(stderr, "Computed up to %" PRIu64 "\n", next_nonce);
 }
 
 int difficulty;
@@ -130,16 +187,16 @@ inline void check_points(uint64_t i, uint64_t j) {
     }
 }
 
-inline void find_collision_flat(uint64_t si, uint64_t sj, uint64_t n) {
+inline void find_collision_flat(size_t si, size_t sj, size_t n) {
     if (si < sj) return;
-    for (uint64_t i = 0; i < n; i ++) {
-        for (uint64_t j = 0; j < ((si == sj) ? i : n); j ++) {
+    for (size_t i = 0; i < n; i ++) {
+        for (size_t j = 0; j < ((si == sj) ? i : n); j ++) {
             check_points(si + i, sj + j);
         }
     }
 }
 
-void find_collision_recursive(uint64_t si, uint64_t sj, uint64_t n) {
+void find_collision_recursive(size_t si, size_t sj, size_t n) {
     if (si < sj) return;
     if (n <= (1 << 10)) {
         return find_collision_flat(si, sj, n);
@@ -154,13 +211,21 @@ void find_collision_recursive(uint64_t si, uint64_t sj, uint64_t n) {
 
 void find_collision() {
     // TODO: parallelize
-    find_collision_recursive(0, 0, BUCKET_SIZE);
+    //find_collision_recursive(0, 0, MEM_SIZE);
+    for (size_t b = 0; b < NUM_BUCKETS; b++) {
+        size_t st = bucket_locs[b], en = bucket_locs[b+1];
+        for (size_t i = st; i < en; i++) {
+            for (size_t j = st; j < i; j++) {
+                check_points(i, j);
+            }
+        }
+    }
 }
 
 
 void aesham2() {
-    for (uint64_t start = 0; ; start += BUCKET_SIZE) {
-        compute_aes(start);
+    while (true) {
+        compute_aes();
         find_collision();
     }
 }
@@ -182,8 +247,27 @@ void print128(__uint128_t val) {
 
 
 void test() {
-    memset(A, 0, sizeof(A));
     A[0] = 1;
+    B[0] = 255;
+    difficulty = 102;
+
+    compute_aes();
+    struct timespec start, end;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
+    find_collision();
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+
+    struct timespec diff;
+    if ((end.tv_nsec-start.tv_nsec)<0) {
+        diff.tv_sec = end.tv_sec-start.tv_sec-1;
+        diff.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+    } else {
+        diff.tv_sec = end.tv_sec-start.tv_sec;
+        diff.tv_nsec = end.tv_nsec-start.tv_nsec;
+    }
+    printf("%ld.%ld\n", diff.tv_sec, diff.tv_nsec);
+    exit(0);
+
 
     __m128i __attribute__((aligned(16))) ek[15];
     aes_keygen(ek, A);
@@ -205,6 +289,10 @@ int main(int argc, char *argv[]) {
     if (!__get_cpuid_aes()) {
         fprintf(stderr, "AES-NI not supported on this CPU!\n");
         return 1;
+    }
+
+    if (argc == 2 && argv[1][0] == 't') {
+        test();
     }
 
     if (argc != 4) {
