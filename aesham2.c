@@ -91,10 +91,10 @@ uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
 #define BUCKET_SIZE (1 << 20)
-__uint128_t cache[BUCKET_SIZE][2] __attribute__((aligned(64)));
+__uint128_t aes[BUCKET_SIZE][2] __attribute__((aligned(64)));
 uint64_t nonces[BUCKET_SIZE];
 
-void cache_aes(uint64_t start) {
+void compute_aes(uint64_t start) {
     fprintf(stderr, "Computed from %" PRIu64 "\n", start);
 
     uint64_t end = start + BUCKET_SIZE;
@@ -103,11 +103,11 @@ void cache_aes(uint64_t start) {
         __m128i __attribute__((aligned(16))) ek[15];
         aes_keygen(ek, A);
         for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-            aes_encrypt_num(ek, start + i, &cache[i][0]);
+            aes_encrypt_num(ek, start + i, &aes[i][0]);
         }
         aes_keygen(ek, B);
         for (uint64_t i = 0; i < BUCKET_SIZE; i++) {
-            aes_encrypt_num(ek, start + i, &cache[i][1]);
+            aes_encrypt_num(ek, start + i, &aes[i][1]);
         }
     }
 
@@ -121,7 +121,7 @@ void cache_aes(uint64_t start) {
 int difficulty;
 
 inline void check_points(uint64_t i, uint64_t j) {
-    int diff = popcount128((cache[i][0] + cache[j][1]) ^ (cache[j][0] + cache[i][1]));
+    int diff = popcount128((aes[i][0] + aes[j][1]) ^ (aes[j][0] + aes[i][1]));
     if (diff <= 128 - difficulty) {
         uint64_t N1 = nonces[j], N2 = nonces[i];
         printf("%" PRIu64 "\n", N1);
@@ -160,7 +160,7 @@ void find_collision() {
 
 void aesham2() {
     for (uint64_t start = 0; ; start += BUCKET_SIZE) {
-        cache_aes(start);
+        compute_aes(start);
         find_collision();
     }
 }
