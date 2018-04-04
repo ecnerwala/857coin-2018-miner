@@ -14,3 +14,5 @@ to compile the code, and/or
     make mine
 to run the actual miner. Don't run it multiple times, it already uses multiple
 threads.
+
+The actual hash functions and blockchain specification is [here](6857Coin.md).
