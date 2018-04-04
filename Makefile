@@ -1,3 +1,4 @@
+CC = gcc
 CFLAGS += -maes -O3 -Wall -Wextra --std=c11 -march=native -mtune=native
 
 all: aesham2 aesham2.s gminer
@@ -14,4 +15,6 @@ clean:
 mine: all
 	./gminer
 
-.PHONY: all clean mine
+money: mine
+
+.PHONY: all clean mine money
