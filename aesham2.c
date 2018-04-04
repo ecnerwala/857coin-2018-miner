@@ -96,7 +96,7 @@ uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
 #define MEM_BITS 24
-#define FILTER_BITS 0
+#define FILTER_BITS 2
 #define BUCKET_BITS 16
 
 #define FILTER_MASK (((1 << FILTER_BITS) - 1) << BUCKET_BITS)
