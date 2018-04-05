@@ -122,7 +122,7 @@ inline void fprint_timestamp(FILE *stream) {
 
 // THREADING UTILITIES
 
-#define NUM_THREADS 8
+#define NUM_THREADS 4
 
 pthread_t threads[NUM_THREADS];
 
@@ -199,7 +199,6 @@ void *compute_aes_thread(void *arg) {
                 aes2[start + j][1] = aes[start + i][1];
                 nonces2[start + j] = nonce + i;
                 buckets[start + j] = diff & BUCKET_MASK;
-                __atomic_fetch_add(&bucket_locs[buckets[start + j]+1], 1, __ATOMIC_RELAXED);
                 j++;
             }
         }
@@ -211,8 +210,6 @@ void *compute_aes_thread(void *arg) {
 void compute_aes() {
     fprint_timestamp(stderr);
     fprintf(stderr, "START: Computing AES from %" PRIu64 "\n", next_nonce);
-
-    memset(bucket_locs, 0, sizeof(bucket_locs));
 
     spawn_threads(compute_aes_thread);
 
@@ -237,6 +234,12 @@ void *bucket_aes_thread(void *arg) {
 void bucket_aes() {
     fprint_timestamp(stderr);
     fprintf(stderr, "START: Bucketing %u items into %u buckets\n", MEM_SIZE, NUM_BUCKETS);
+
+    memset(bucket_locs, 0, sizeof(bucket_locs));
+
+    for (size_t i = 0; i < MEM_SIZE; i++) {
+        bucket_locs[buckets[i]+1] ++;
+    }
 
     for (size_t b = 0; b < NUM_BUCKETS; b ++) {
         bucket_locs[b+1] += bucket_locs[b];
