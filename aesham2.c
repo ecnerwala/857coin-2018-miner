@@ -92,6 +92,32 @@ inline uint64_t low64(const __uint128_t *v) {
     return *(const uint64_t *)(v);
 }
 
+inline struct timespec time_diff(struct timespec start, struct timespec end) {
+    struct timespec diff;
+    if ((end.tv_nsec-start.tv_nsec)<0) {
+        diff.tv_sec = end.tv_sec-start.tv_sec-1;
+        diff.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+    } else {
+        diff.tv_sec = end.tv_sec-start.tv_sec;
+        diff.tv_nsec = end.tv_nsec-start.tv_nsec;
+    }
+    return diff;
+}
+
+inline void fprint_time(FILE *stream, struct timespec t) {
+    fprintf(stream, "%3ld.%09ld", t.tv_sec, t.tv_nsec);
+}
+
+struct timespec program_start_time;
+
+inline void fprint_timestamp(FILE *stream) {
+    struct timespec current_time;
+    clock_gettime(CLOCK_REALTIME, &current_time);
+    struct timespec diff = time_diff(program_start_time, current_time);
+    fprint_time(stream, diff);
+    fprintf(stream, ": ");
+}
+
 uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
@@ -121,7 +147,8 @@ size_t bucket_locs[NUM_BUCKETS+1];
 uint64_t next_nonce;
 
 void compute_aes() {
-    fprintf(stderr, "Computed from %" PRIu64 "\n", next_nonce);
+    fprint_timestamp(stderr);
+    fprintf(stderr, "START: Computing AES from %" PRIu64 "\n", next_nonce);
 
     memset(bucket_locs, 0, sizeof(bucket_locs));
 
@@ -151,6 +178,11 @@ void compute_aes() {
 
         next_nonce += MEM_SIZE;
     }
+    fprint_timestamp(stderr);
+    fprintf(stderr, "FINISH: Computed AES up to %" PRIu64 "\n", next_nonce);
+
+    fprint_timestamp(stderr);
+    fprintf(stderr, "START: Bucketing %u items into %u buckets\n", MEM_SIZE, NUM_BUCKETS);
 
     for (size_t b = 0; b < NUM_BUCKETS; b ++) {
         bucket_locs[b+1] += bucket_locs[b];
@@ -172,7 +204,8 @@ void compute_aes() {
 
     assert(bucket_locs[NUM_BUCKETS] == MEM_SIZE);
 
-    fprintf(stderr, "Computed up to %" PRIu64 "\n", next_nonce);
+    fprint_timestamp(stderr);
+    fprintf(stderr, "FINISH: Bucketed items\n");
 }
 
 int difficulty;
@@ -210,6 +243,8 @@ void find_collision_recursive(size_t si, size_t sj, size_t n) {
 }
 
 void find_collision() {
+    fprint_timestamp(stderr);
+    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE);
     // TODO: parallelize
     //find_collision_recursive(0, 0, MEM_SIZE);
     for (size_t b = 0; b < NUM_BUCKETS; b++) {
@@ -220,6 +255,8 @@ void find_collision() {
             }
         }
     }
+    fprint_timestamp(stderr);
+    fprintf(stderr, "FINISH: Found no collisions\n");
 }
 
 
@@ -253,19 +290,10 @@ void test() {
 
     compute_aes();
     struct timespec start, end;
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
+    clock_gettime(CLOCK_REALTIME, &start);
     find_collision();
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
-
-    struct timespec diff;
-    if ((end.tv_nsec-start.tv_nsec)<0) {
-        diff.tv_sec = end.tv_sec-start.tv_sec-1;
-        diff.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
-    } else {
-        diff.tv_sec = end.tv_sec-start.tv_sec;
-        diff.tv_nsec = end.tv_nsec-start.tv_nsec;
-    }
-    printf("%ld.%ld\n", diff.tv_sec, diff.tv_nsec);
+    clock_gettime(CLOCK_REALTIME, &end);
+    fprint_time(stderr, time_diff(start, end));
     exit(0);
 
 
@@ -286,6 +314,8 @@ void test() {
 
 
 int main(int argc, char *argv[]) {
+    clock_gettime(CLOCK_REALTIME, &program_start_time);
+
     if (!__get_cpuid_aes()) {
         fprintf(stderr, "AES-NI not supported on this CPU!\n");
         return 1;
