@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS += -maes -O3 -Wall -Wextra --std=c11 -march=native -mtune=native -D_POSIX_C_SOURCE=199309L
+CFLAGS += -maes -O3 -Wall -Wextra --std=c11 -march=native -mtune=native -D_POSIX_C_SOURCE=199309L -pthread
 
 all: aesham2 aesham2.s gminer
 

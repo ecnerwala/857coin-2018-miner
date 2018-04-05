@@ -11,6 +11,8 @@
 #include <wmmintrin.h>
 #include <emmintrin.h>
 
+#include <pthread.h>
+
 bool __get_cpuid_aes() {
     unsigned int a,b,c,d;
     if (!__get_cpuid(0x1, &a, &b, &c, &d)) {
@@ -118,17 +120,44 @@ inline void fprint_timestamp(FILE *stream) {
     fprintf(stream, ": ");
 }
 
+// THREADING UTILITIES
+
+#define NUM_THREADS 8
+
+pthread_t threads[NUM_THREADS];
+
+inline void spawn_threads(void *(*start_routine) (void *)) {
+    if (NUM_THREADS == 1) {
+        start_routine(0);
+    } else {
+        for (int i = 0; i < NUM_THREADS; i++) {
+            pthread_create(&threads[i], NULL, start_routine, (void *) (uintptr_t) i);
+        }
+        for (int i = 0; i < NUM_THREADS; i++) {
+            pthread_join(threads[i], NULL);
+        }
+    }
+}
+
+// END THREADING UTILITIES
+
 uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
 #define MEM_BITS 24
-#define FILTER_BITS 2
-#define BUCKET_BITS 16
+#define FILTER_BITS 4
+#define BUCKET_BITS 14
 
 #define FILTER_MASK (((1 << FILTER_BITS) - 1) << BUCKET_BITS)
 #define BUCKET_MASK ((1 << BUCKET_BITS) - 1)
 #define NUM_BUCKETS (1 << BUCKET_BITS)
 #define MEM_SIZE (1 << MEM_BITS)
+
+#define MEM_PER_THREAD (MEM_SIZE / NUM_THREADS)
+static_assert(MEM_PER_THREAD * NUM_THREADS == MEM_SIZE, "Memory is not a multiple of thread size");
+#define BUCKETS_PER_THREAD (NUM_BUCKETS / NUM_THREADS)
+static_assert(BUCKETS_PER_THREAD * NUM_THREADS == NUM_BUCKETS, "Buckets is not a multiple of thread size");
+
 __uint128_t aes[MEM_SIZE][2] __attribute__((aligned(4096)));
 uint64_t nonces[MEM_SIZE];
 
@@ -146,41 +175,66 @@ size_t bucket_locs[NUM_BUCKETS+1];
 
 uint64_t next_nonce;
 
+void *compute_aes_thread(void *arg) {
+    uintptr_t tid = (uintptr_t) arg;
+    size_t start = MEM_PER_THREAD * tid;
+
+    for (size_t j = 0; j < MEM_PER_THREAD; ) {
+        uint64_t nonce = __atomic_fetch_add(&next_nonce, MEM_PER_THREAD, __ATOMIC_RELAXED);
+        // Perform the encryptions
+        __m128i __attribute__((aligned(16))) ek[15];
+        aes_keygen(ek, A);
+        for (size_t i = 0; i < MEM_PER_THREAD; i++) {
+            aes_encrypt_num(ek, nonce + i, &aes[start + i][0]);
+        }
+        aes_keygen(ek, B);
+        for (size_t i = 0; i < MEM_PER_THREAD; i++) {
+            aes_encrypt_num(ek, nonce + i, &aes[start + i][1]);
+        }
+
+        for (size_t i = 0; i < MEM_PER_THREAD && j < MEM_PER_THREAD; i++) {
+            uint64_t diff = low64(&aes[start + i][0]) - low64(&aes[start + i][1]);
+            if ((diff & FILTER_MASK) == 0) {
+                aes2[start + j][0] = aes[start + i][0];
+                aes2[start + j][1] = aes[start + i][1];
+                nonces2[start + j] = nonce + i;
+                buckets[start + j] = diff & BUCKET_MASK;
+                __atomic_fetch_add(&bucket_locs[buckets[start + j]+1], 1, __ATOMIC_RELAXED);
+                j++;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 void compute_aes() {
     fprint_timestamp(stderr);
     fprintf(stderr, "START: Computing AES from %" PRIu64 "\n", next_nonce);
 
     memset(bucket_locs, 0, sizeof(bucket_locs));
 
-    for (size_t j = 0; j < MEM_SIZE; ) {
-        // Perform the encryptions
-        __m128i __attribute__((aligned(16))) ek[15];
-        aes_keygen(ek, A);
-        for (size_t i = 0; i < MEM_SIZE; i++) {
-            aes_encrypt_num(ek, next_nonce + i, &aes[i][0]);
-        }
-        aes_keygen(ek, B);
-        for (size_t i = 0; i < MEM_SIZE; i++) {
-            aes_encrypt_num(ek, next_nonce + i, &aes[i][1]);
-        }
+    spawn_threads(compute_aes_thread);
 
-        for (size_t i = 0; i < MEM_SIZE && j < MEM_SIZE; i++) {
-            uint64_t diff = low64(&aes[i][0]) - low64(&aes[i][1]);
-            if ((diff & FILTER_MASK) == 0) {
-                aes2[j][0] = aes[i][0];
-                aes2[j][1] = aes[i][1];
-                nonces2[j] = next_nonce + i;
-                buckets[j] = diff & BUCKET_MASK;
-                bucket_locs[buckets[j]+1] ++;
-                j++;
-            }
-        }
-
-        next_nonce += MEM_SIZE;
-    }
     fprint_timestamp(stderr);
     fprintf(stderr, "FINISH: Computed AES up to %" PRIu64 "\n", next_nonce);
+}
 
+void *bucket_aes_thread(void *arg) {
+    uintptr_t tid = (uintptr_t) arg;
+    size_t start = MEM_PER_THREAD * tid;
+
+    for (size_t i = 0; i < MEM_PER_THREAD; i++) {
+        size_t j = __atomic_fetch_add(&bucket_locs[buckets[start+i]], 1, __ATOMIC_RELAXED);
+        aes[j][0] = aes2[start+i][0];
+        aes[j][1] = aes2[start+i][1];
+        nonces[j] = nonces2[start+i];
+    }
+
+    return NULL;
+}
+
+void bucket_aes() {
     fprint_timestamp(stderr);
     fprintf(stderr, "START: Bucketing %u items into %u buckets\n", MEM_SIZE, NUM_BUCKETS);
 
@@ -189,12 +243,7 @@ void compute_aes() {
     }
     assert(bucket_locs[NUM_BUCKETS] == MEM_SIZE);
 
-    for (size_t i = 0; i < MEM_SIZE; i++) {
-        size_t j = bucket_locs[buckets[i]] ++;
-        aes[j][0] = aes2[i][0];
-        aes[j][1] = aes2[i][1];
-        nonces[j] = nonces2[i];
-    }
+    spawn_threads(bucket_aes_thread);
 
     // Reset bucket_locs for future use
     for(size_t b = NUM_BUCKETS; b > 0; b--) {
@@ -213,48 +262,41 @@ int difficulty;
 inline void check_points(uint64_t i, uint64_t j) {
     int diff = popcount128((aes[i][0] + aes[j][1]) ^ (aes[j][0] + aes[i][1]));
     if (diff <= 128 - difficulty) {
+        assert(i != j);
         uint64_t N1 = nonces[j], N2 = nonces[i];
+        assert(N1 != N2);
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "FINISH: Found a collision!\n");
+
         printf("%" PRIu64 "\n", N1);
         printf("%" PRIu64 "\n", N2);
         exit(0);
     }
 }
 
-inline void find_collision_flat(size_t si, size_t sj, size_t n) {
-    if (si < sj) return;
-    for (size_t i = 0; i < n; i ++) {
-        for (size_t j = 0; j < ((si == sj) ? i : n); j ++) {
-            check_points(si + i, sj + j);
-        }
-    }
-}
+void *find_collision_thread(void *arg) {
+    uintptr_t tid = (uintptr_t) arg;
+    size_t start = BUCKETS_PER_THREAD * tid;
 
-void find_collision_recursive(size_t si, size_t sj, size_t n) {
-    if (si < sj) return;
-    if (n <= (1 << 10)) {
-        return find_collision_flat(si, sj, n);
-    }
-
-    n /= 2;
-    find_collision_recursive(si, sj, n);
-    find_collision_recursive(si + n, sj, n);
-    find_collision_recursive(si, sj + n, n);
-    find_collision_recursive(si + n, sj + n, n);
-}
-
-void find_collision() {
-    fprint_timestamp(stderr);
-    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE);
-    // TODO: parallelize
-    //find_collision_recursive(0, 0, MEM_SIZE);
-    for (size_t b = 0; b < NUM_BUCKETS; b++) {
-        size_t st = bucket_locs[b], en = bucket_locs[b+1];
+    for (size_t b = 0; b < BUCKETS_PER_THREAD; b++) {
+        size_t st = bucket_locs[start+b], en = bucket_locs[start+b+1];
         for (size_t i = st; i < en; i++) {
             for (size_t j = st; j < i; j++) {
                 check_points(i, j);
             }
         }
     }
+
+    return NULL;
+}
+
+void find_collision() {
+    fprint_timestamp(stderr);
+    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE);
+
+    spawn_threads(find_collision_thread);
+
     fprint_timestamp(stderr);
     fprintf(stderr, "FINISH: Found no collisions\n");
 }
@@ -263,6 +305,7 @@ void find_collision() {
 void aesham2() {
     while (true) {
         compute_aes();
+        bucket_aes();
         find_collision();
     }
 }
@@ -289,6 +332,7 @@ void test() {
     difficulty = 102;
 
     compute_aes();
+    bucket_aes();
     struct timespec start, end;
     clock_gettime(CLOCK_REALTIME, &start);
     find_collision();
@@ -339,5 +383,6 @@ int main(int argc, char *argv[]) {
 
     difficulty = atoi(argv[3]);
 
+    fprintf(stderr, "Running with %d threads\n", NUM_THREADS);
     aesham2();
 }
