@@ -295,8 +295,16 @@ void *find_collision_thread(void *arg) {
 }
 
 void find_collision() {
+    unsigned long long num_checks = 0;
+    for (size_t b = 0; b < NUM_BUCKETS; b++) {
+        unsigned long long items = bucket_locs[b+1] - bucket_locs[b];
+        num_checks += items * items;
+    }
+    num_checks -= MEM_SIZE;
+    num_checks /= 2;
+
     fprint_timestamp(stderr);
-    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE / 2);
+    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (~%u each) with %llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, num_checks);
 
     spawn_threads(find_collision_thread);
 
