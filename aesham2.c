@@ -145,7 +145,7 @@ uint8_t A[32] __attribute__((aligned(16)));
 uint8_t B[32] __attribute__((aligned(16)));
 
 #define MEM_BITS 24
-#define FILTER_BITS 4
+#define FILTER_BITS 6
 #define BUCKET_BITS 14
 
 #define FILTER_MASK (((1 << FILTER_BITS) - 1) << BUCKET_BITS)
@@ -293,7 +293,7 @@ void *find_collision_thread(void *arg) {
 
 void find_collision() {
     fprint_timestamp(stderr);
-    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE);
+    fprintf(stderr, "START: Finding collisions: %u items in %u buckets (%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, (unsigned long long) (MEM_SIZE / NUM_BUCKETS) * MEM_SIZE / 2);
 
     spawn_threads(find_collision_thread);
 
