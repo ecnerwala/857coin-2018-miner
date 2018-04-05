@@ -346,6 +346,15 @@ func TryMine(ctx context.Context, template *BlockHeader) (*BlockHeader, error) {
 	fmt.Println("Success!")
 	fmt.Println("New block ID:", header.Id())
 
+	// Linux notification
+	notification := exec.Command(
+		"notify-send",
+		"--urgency=low",
+		"--app-name=gminer",
+		fmt.Sprintf("Mined a block w/ d = %d", header.Difficulty),
+	)
+	go notification.Run()
+
 	return header, nil
 }
 
@@ -401,7 +410,7 @@ func MineNext() {
 
 func MineOn(start HexHash, difficulty uint64) {
 	template := &BlockHeader{
-		ParentId: start,
+		ParentId:   start,
 		Difficulty: difficulty,
 	}
 	for {
@@ -413,7 +422,7 @@ func MineOn(start HexHash, difficulty uint64) {
 			continue
 		}
 		template = &BlockHeader{
-			ParentId: next.Id(),
+			ParentId:   next.Id(),
 			Difficulty: template.Difficulty,
 		}
 	}
