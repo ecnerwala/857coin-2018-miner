@@ -262,12 +262,16 @@ void bucket_aes() {
 
 int difficulty;
 
-inline void check_points(uint64_t i, uint64_t j) {
+static pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static inline void check_points(uint64_t i, uint64_t j) {
     int diff = popcount128((aes[i][0] + aes[j][1]) ^ (aes[j][0] + aes[i][1]));
     if (diff <= 128 - difficulty) {
         assert(i != j);
         uint64_t N1 = nonces[j], N2 = nonces[i];
         assert(N1 != N2);
+
+        pthread_mutex_lock(&result_mutex);
 
         fprint_timestamp(stderr);
         fprintf(stderr, "FINISH: Found a collision!\n");
