@@ -358,7 +358,7 @@ func TryMine(ctx context.Context, template *BlockHeader) (*BlockHeader, error) {
 	return header, nil
 }
 
-func TryMineNext() {
+func TryMineNext() (*BlockHeader, error) {
 	var next *BlockHeader
 	var err error
 
@@ -368,7 +368,7 @@ func TryMineNext() {
 	next, err = GetNext()
 	if err != nil {
 		fmt.Println("GetNext failed:", err)
-		return
+		return nil, err
 	}
 
 	// Poll for new versions of next as we're running
@@ -391,7 +391,7 @@ func TryMineNext() {
 		}
 	}()
 
-	TryMine(ctx, next)
+	return TryMine(ctx, next)
 }
 
 func MustDecodeHex(s string) *HexHash {
@@ -402,18 +402,22 @@ func MustDecodeHex(s string) *HexHash {
 	return res
 }
 
-func MineNext() {
-	for {
-		TryMineNext()
+func MineNext(maxBlocks int) {
+	for maxBlocks != 0 {
+		_, err := TryMineNext()
+		if err != nil {
+			continue
+		}
+		maxBlocks--
 	}
 }
 
-func MineOn(start HexHash, difficulty uint64) {
+func MineOn(start HexHash, difficulty uint64, maxBlocks int) {
 	template := &BlockHeader{
 		ParentId:   start,
 		Difficulty: difficulty,
 	}
-	for {
+	for maxBlocks != 0 {
 		next, err := TryMine(context.Background(), template)
 		if err != nil {
 			if strings.Contains(err.Error(), "invalid difficulty") {
@@ -425,20 +429,23 @@ func MineOn(start HexHash, difficulty uint64) {
 			ParentId:   next.Id(),
 			Difficulty: template.Difficulty,
 		}
+		maxBlocks--
 	}
 }
 
 func main() {
 	base := flag.String("base", "", "Previous block ID to build a chain on")
 	difficulty := flag.Uint64("difficulty", 86, "Difficulty to mine at")
+	maxBlocks := flag.Int("maxBlocks", -1, "Maximum nubmer of blocks to mine (< 0 for infinity)")
 	flag.Parse()
 
 	if *base != "" {
 		MineOn(
 			*MustDecodeHex(*base),
 			*difficulty,
+			*maxBlocks,
 		)
 	} else {
-		MineNext()
+		MineNext(*maxBlocks)
 	}
 }
