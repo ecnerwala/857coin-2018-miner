@@ -334,7 +334,7 @@ func TryMine(ctx context.Context, template *BlockHeader) (*BlockHeader, error) {
 	}
 
 	fmt.Printf("Sending block...\n")
-	block := &Block{Header: *header, Contents: contents}
+	block := &Block{Id: header.Id(), Header: *header, Contents: contents}
 	fmt.Printf("%+v\n", block)
 
 	err = SendBlock(block)
@@ -344,7 +344,7 @@ func TryMine(ctx context.Context, template *BlockHeader) (*BlockHeader, error) {
 	}
 
 	fmt.Println("Success!")
-	fmt.Println("New block ID:", header.Id())
+	fmt.Println("New block ID:", block.Id)
 
 	// Linux notification
 	notification := exec.Command(
