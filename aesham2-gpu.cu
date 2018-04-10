@@ -9,6 +9,17 @@
 #include <cstdint>
 #include <iostream>
 
+// Macro to catch CUDA errors in CUDA runtime calls
+#define CUDA_SAFE_CALL(call) \
+do { \
+    cudaError_t err = call; \
+    if (cudaSuccess != err) { \
+        fprintf (stderr, "Cuda error in file '%s' in line %i : %s.", \
+                 __FILE__, __LINE__, cudaGetErrorString(err) ); \
+        exit(EXIT_FAILURE); \
+    } \
+} while (0)
+
 using aes_block = uint4;
 
 __constant__ uint CUDA_TBOX[4][256] = {
@@ -202,6 +213,7 @@ __global__ void check_pairs_kernel() {
 void go() {
     static uint64_t nonce_start = 0;
     compute_aes_kernel<<<256, 256>>>(nonce_start);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     nonce_start += (uint64_t(MEM_SIZE) << FILTER_BITS) * 4; // *4 to be conservative
 
     thrust::sort_by_key (
@@ -209,8 +221,10 @@ void go() {
             thrust::device_ptr<unsigned int>(buckets + MEM_SIZE),
             thrust::make_zip_iterator(thrust::make_tuple(thrust::device_ptr<aes_pair>(aes), thrust::device_ptr<uint64_t>(nonces)))
     );
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
     check_pairs_kernel<<<256, 256>>>();
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 void parse_hex(const char s[], uint8_t v[]) {
@@ -241,6 +255,8 @@ int main(int argc, char *argv[]) {
 
     uint8_t A[32] __attribute__((aligned(16)));
     uint8_t B[32] __attribute__((aligned(16)));
+    memset(A, 0, sizeof(A));
+    memset(B, 0, sizeof(B));
 
     parse_hex(seed1, A);
     parse_hex(seed2, B);
@@ -248,10 +264,18 @@ int main(int argc, char *argv[]) {
     __m128i __attribute__((aligned(16))) ek[2][15];
     aes_keygen(ek[0], A);
     aes_keygen(ek[1], B);
-    cudaMemcpy(CUDA_ROUND_KEYS, ek, sizeof(ek), cudaMemcpyHostToDevice);
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(CUDA_ROUND_KEYS, ek, sizeof(ek)));
 
     unsigned int host_difficulty = atoi(argv[3]);
-    cudaMemcpy(&difficulty, &host_difficulty, sizeof(difficulty), cudaMemcpyHostToDevice);
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(difficulty, &host_difficulty, sizeof(difficulty)));
 
+    go();
+
+    uint64_t nonce1, nonce2;
+    CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&nonce1, N1, sizeof(nonce1)));
+    CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&nonce2, N2, sizeof(nonce2)));
+    printf("%lu %lu\n", nonce1, nonce2);
     return 0;
 }
+
+// vim: set et ts=4 sts=4 sw=4 cindent:
