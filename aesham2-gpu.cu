@@ -210,6 +210,13 @@ __global__ void check_pairs_kernel() {
     }
 }
 
+template <typename T> thrust::device_ptr<T> device_ptr_symbol(const void* symbol) {
+    void *tmp;
+    CUDA_SAFE_CALL(cudaGetSymbolAddress(&tmp, symbol));
+    return thrust::device_ptr<T>((T*) tmp);
+}
+
+
 void go() {
     static uint64_t nonce_start = 0;
     compute_aes_kernel<<<256, 256>>>(nonce_start);
@@ -217,9 +224,9 @@ void go() {
     nonce_start += (uint64_t(MEM_SIZE) << FILTER_BITS) * 4; // *4 to be conservative
 
     thrust::sort_by_key (
-            thrust::device_ptr<unsigned int>(buckets),
-            thrust::device_ptr<unsigned int>(buckets + MEM_SIZE),
-            thrust::make_zip_iterator(thrust::make_tuple(thrust::device_ptr<aes_pair>(aes), thrust::device_ptr<uint64_t>(nonces)))
+            device_ptr_symbol<unsigned int>(buckets),
+            device_ptr_symbol<unsigned int>(buckets) + MEM_SIZE,
+            thrust::make_zip_iterator(thrust::make_tuple(device_ptr_symbol<aes_pair>(aes), device_ptr_symbol<uint64_t>(nonces)))
     );
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
