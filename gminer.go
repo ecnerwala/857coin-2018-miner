@@ -225,6 +225,8 @@ func (h *BlockHeader) Verify() error {
 	return nil
 }
 
+var useGPU = flag.Bool("gpu", false, "Mine using the GPU")
+
 func (h *BlockHeader) RunSolver(ctx context.Context) error {
 	seed1, seed2 := h.Seeds()
 	difficulty := h.Difficulty
@@ -233,7 +235,11 @@ func (h *BlockHeader) RunSolver(ctx context.Context) error {
 		fmt.Sprintf("%x", seed2[:]),
 		fmt.Sprintf("%d", difficulty),
 	}
-	c := exec.CommandContext(ctx, "./aesham2", args...)
+	executable := "./aesham2"
+	if *useGPU {
+		executable += "-gpu"
+	}
+	c := exec.CommandContext(ctx, executable, args...)
 
 	c.Stderr = os.Stdout
 
