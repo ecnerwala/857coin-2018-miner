@@ -22,19 +22,24 @@ do { \
 
 using aes_block = uint4;
 
-__constant__ uint CUDA_TBOX[4][256] = {
-    {0,},
-    {0,},
-    {0,},
-    {0,},
-};
-
+uint HOST_TBOX[4][256];
+__constant__ uint CUDA_TBOX[4][256];
 __shared__ uint TBOX[4][256];
-__device__ aes_block CUDA_ROUND_KEYS[2][15];
+aes_block HOST_ROUND_KEYS[2][15];
+__constant__ aes_block CUDA_ROUND_KEYS[2][15];
 __shared__ aes_block ROUND_KEYS[2][15];
 
-__device__ inline aes_block aes_enc(uint64_t inp, const int key) {
-    aes_block state = {0,0,__brev(inp >> 32ull),__brev((uint)inp)};
+__host__ __device__ inline aes_block aes_enc(uint64_t inp, const int key) {
+#ifndef __CUDA_ARCH__
+#define ROUND_KEYS HOST_ROUND_KEYS
+#define TBOX HOST_TBOX
+#endif
+
+#ifndef __CUDA_ARCH__
+    aes_block state = {0,0,__builtin_bswap32(inp >> 32ull),__builtin_bswap32((uint)inp)};
+#else
+    aes_block state = {0,0,__byte_perm(uint(inp >> 32ull), 0, 0x00010203),__byte_perm(uint(inp), 0, 0x00010203)};
+#endif
     state.x ^= ROUND_KEYS[key][0].x;
     state.y ^= ROUND_KEYS[key][0].y;
     state.z ^= ROUND_KEYS[key][0].z;
@@ -64,6 +69,10 @@ __device__ inline aes_block aes_enc(uint64_t inp, const int key) {
     state.z ^= ROUND_KEYS[key][14].z;
     state.w ^= ROUND_KEYS[key][14].w;
     return state;
+#ifndef __CUDA_ARCH__
+#undef ROUND_KEYS
+#undef TBOX
+#endif
 }
 
 // AES Keygen on CPU
@@ -110,6 +119,33 @@ __host__ inline void aes_keygen(__m128i rk[], const void* cipherKey) {
     rk[12] = KEYEXP256(rk[10], rk[11], 0x20);
     rk[13] = KEYEXP256_2(rk[11], rk[12]);
     rk[14] = KEYEXP256(rk[12], rk[13], 0x40);
+}
+
+__host__ inline void aes_tbox_gen() {
+    uint4 key_value = {0,0,0,0};
+    __m128i key = _mm_load_si128((const __m128i *) &key_value);
+    uint4 inp_value = {0x52525252,0x52525252,0x52525252,0x52525252};
+    for (int k = 0; k < 4; k++) {
+        for (int v = 0; v < 256; v++) {
+            if (k == 0) {
+                inp_value.x = 0x52525200 | (v << 0);
+            } else if (k == 1) {
+                inp_value.y = 0x52520052 | (v << 8);
+            } else if (k == 2) {
+                inp_value.z = 0x52005252 | (v << 16);
+            } else if (k == 3) {
+                inp_value.w = 0x00525252 | (v << 24);
+            }
+            __m128i inp = _mm_load_si128((const __m128i *) &inp_value);
+            __m128i out = _mm_aesenc_si128(inp, key);
+            uint4 out_value = {0,0,0,0};
+            _mm_store_si128((__m128i *) &out_value, out);
+            HOST_TBOX[k][v] = out_value.x;
+            assert(out_value.y == 0);
+            assert(out_value.z == 0);
+            assert(out_value.w == 0);
+        }
+    }
 }
 
 #define MEM_BITS 24
@@ -181,7 +217,7 @@ __device__ inline uint hamming_distance(aes_block l, aes_block r) {
 }
 
 __device__ unsigned int num_results = 0;
-__device__ uint64_t N1, N2;
+__device__ uint64_t nonce1, nonce2;
 
 __device__ bool check_pair(const unsigned int i, const unsigned int j) {
     aes_block l = add_aes_block(aes[i].A, aes[j].B);
@@ -190,8 +226,8 @@ __device__ bool check_pair(const unsigned int i, const unsigned int j) {
         // Yay we're done! Set the output
         unsigned int res_num = atomicAdd(&num_results, 1);
         if (res_num == 0) {
-            N1 = nonces[i];
-            N2 = nonces[j];
+            nonce1 = nonces[i];
+            nonce2 = nonces[j];
         }
         return true;
     }
@@ -218,22 +254,33 @@ template <typename T> device_ptr<T> device_symbol(const void* symbol) {
 }
 }
 
+uint64_t host_nonce1, host_nonce2;
 
 void go() {
     static uint64_t nonce_start = 0;
-    compute_aes_kernel<<<256, 256>>>(nonce_start);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
-    nonce_start += (uint64_t(MEM_SIZE) << FILTER_BITS) * 4; // *4 to be conservative
+    while (true) {
+        compute_aes_kernel<<<256, 256>>>(nonce_start);
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
+        nonce_start += (uint64_t(MEM_SIZE) << FILTER_BITS) * 4; // *4 to be conservative
 
-    thrust::sort_by_key (
-            thrust::device_symbol<unsigned int>(buckets),
-            thrust::device_symbol<unsigned int>(buckets) + MEM_SIZE,
-            thrust::make_zip_iterator(thrust::make_tuple(thrust::device_symbol<aes_pair>(aes), thrust::device_symbol<uint64_t>(nonces)))
-    );
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+        thrust::sort_by_key (
+                thrust::device_symbol<unsigned int>(buckets),
+                thrust::device_symbol<unsigned int>(buckets) + MEM_SIZE,
+                thrust::make_zip_iterator(thrust::make_tuple(thrust::device_symbol<aes_pair>(aes), thrust::device_symbol<uint64_t>(nonces)))
+                );
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
-    check_pairs_kernel<<<256, 256>>>();
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+        check_pairs_kernel<<<256, 256>>>();
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
+        unsigned int is_done;
+        CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&is_done, num_results, sizeof(num_results)));
+        if (is_done) {
+            CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&host_nonce1, nonce1, sizeof(nonce1)));
+            CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&host_nonce2, nonce2, sizeof(nonce2)));
+            break;
+        }
+    }
 }
 
 void parse_hex(const char s[], uint8_t v[]) {
@@ -270,20 +317,19 @@ int main(int argc, char *argv[]) {
     parse_hex(seed1, A);
     parse_hex(seed2, B);
 
-    __m128i __attribute__((aligned(16))) ek[2][15];
-    aes_keygen(ek[0], A);
-    aes_keygen(ek[1], B);
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(CUDA_ROUND_KEYS, ek, sizeof(ek)));
+    aes_keygen((__m128i*) HOST_ROUND_KEYS[0], A);
+    aes_keygen((__m128i*) HOST_ROUND_KEYS[1], B);
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(CUDA_ROUND_KEYS, HOST_ROUND_KEYS, sizeof(CUDA_ROUND_KEYS)));
+
+    aes_tbox_gen();
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(CUDA_TBOX, HOST_TBOX, sizeof(CUDA_TBOX)));
 
     unsigned int host_difficulty = atoi(argv[3]);
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(difficulty, &host_difficulty, sizeof(difficulty)));
 
     go();
 
-    uint64_t nonce1, nonce2;
-    CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&nonce1, N1, sizeof(nonce1)));
-    CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&nonce2, N2, sizeof(nonce2)));
-    printf("%lu %lu\n", nonce1, nonce2);
+    printf("%lu %lu\n", host_nonce1, host_nonce2);
     return 0;
 }
 
