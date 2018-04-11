@@ -6,7 +6,8 @@ NVCFLAGS += -arch=sm_37 --std=c++11 -Xcompiler -maes,-O3,-Wall,-Wextra,-march=na
 export PATH := $(PATH):/opt/cuda/bin
 export PATH := $(PATH):/usr/local/cuda/bin
 
-all: aesham2 aesham2.s gminer aesham2-gpu
+all: aesham2 aesham2.s gminer
+gpu: aesham2-gpu
 
 %.s: %.c
 	$(CC) $(CFLAGS) -S $^ -fverbose-asm -g
@@ -18,11 +19,15 @@ all: aesham2 aesham2.s gminer aesham2-gpu
 	$(NVCC) $(NVCFLAGS) -o $@ $^
 
 clean:
-	rm -rf aesham2 aesham2.s gminer
+	rm -rf aesham2 aesham2.s aesham2-gpu gminer
 
 mine: all
 	./gminer $(ARGS)
 
+mine-gpu: gpu
+	./gminer -gpu $(ARGS)
+
 money: mine
+money-gpu: mine-gpu
 
 .PHONY: all clean mine money
