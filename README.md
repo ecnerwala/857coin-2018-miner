@@ -16,3 +16,10 @@ to run the actual miner. Don't run it multiple times, it already uses multiple
 threads.
 
 The actual hash functions and blockchain specification is [here](6857Coin.md).
+
+## GPU
+
+We now have a GPU miner! It's lightly optimized, and it's about 3x faster on a
+K80s than my 4-core CPU, which isn't a huge gain. It does pretty much the same
+thing as the CPU miner. Build with `make gpu` and mine with `make mine-gpu` (or
+pass the `-gpu` flag directly to `gminer`).
