@@ -29,17 +29,21 @@ aes_block HOST_ROUND_KEYS[2][15];
 __constant__ aes_block CUDA_ROUND_KEYS[2][15];
 __shared__ aes_block ROUND_KEYS[2][15];
 
+__host__ __device__ inline uint bswap32(uint inp) {
+#ifndef __CUDA_ARCH__
+    return __builtin_bswap32(inp);
+#else
+    return __byte_perm(inp, 0, 0x0123);
+#endif
+}
+
 __host__ __device__ inline aes_block aes_enc(uint64_t inp, const int key) {
 #ifndef __CUDA_ARCH__
 #define ROUND_KEYS HOST_ROUND_KEYS
 #define TBOX HOST_TBOX
 #endif
 
-#ifndef __CUDA_ARCH__
-    aes_block state = {0,0,__builtin_bswap32(inp >> 32ull),__builtin_bswap32((uint)inp)};
-#else
-    aes_block state = {0,0,__byte_perm(uint(inp >> 32ull), 0, 0x00010203),__byte_perm(uint(inp), 0, 0x00010203)};
-#endif
+    aes_block state = {0,0,bswap32(inp >> 32ull),bswap32((uint)inp)};
     state.x ^= ROUND_KEYS[key][0].x;
     state.y ^= ROUND_KEYS[key][0].y;
     state.z ^= ROUND_KEYS[key][0].z;
@@ -68,6 +72,12 @@ __host__ __device__ inline aes_block aes_enc(uint64_t inp, const int key) {
     state.y ^= ROUND_KEYS[key][14].y;
     state.z ^= ROUND_KEYS[key][14].z;
     state.w ^= ROUND_KEYS[key][14].w;
+    state = {
+        bswap32(state.w),
+        bswap32(state.z),
+        bswap32(state.y),
+        bswap32(state.x),
+    };
     return state;
 #ifndef __CUDA_ARCH__
 #undef ROUND_KEYS
@@ -124,9 +134,9 @@ __host__ inline void aes_keygen(__m128i rk[], const void* cipherKey) {
 __host__ inline void aes_tbox_gen() {
     uint4 key_value = {0,0,0,0};
     __m128i key = _mm_load_si128((const __m128i *) &key_value);
-    uint4 inp_value = {0x52525252,0x52525252,0x52525252,0x52525252};
     for (int k = 0; k < 4; k++) {
         for (int v = 0; v < 256; v++) {
+            uint4 inp_value = {0x52525252,0x52525252,0x52525252,0x52525252};
             if (k == 0) {
                 inp_value.x = 0x52525200 | (v << 0);
             } else if (k == 1) {
@@ -281,6 +291,11 @@ void go() {
             break;
         }
     }
+}
+
+void print128(aes_block val) {
+    uint8_t *v = (uint8_t *) &val;
+    for (int i = 0; i < 16; i++) { fprintf(stderr, "%02x", v[i]); } fprintf(stderr, "\n");
 }
 
 void parse_hex(const char s[], uint8_t v[]) {

@@ -40,6 +40,7 @@ inline __m128i aes128_keyexpand(__m128i key) {
 #define KEYEXP256(K1, K2, I)  KEYEXP128_H(K1, K2, I, 0xff)
 #define KEYEXP256_2(K1, K2) KEYEXP128_H(K1, K2, 0x00, 0xaa)
 
+extern inline void aes_keygen(__m128i rk[], const void* cipherKey);
 inline void aes_keygen(__m128i rk[], const void* cipherKey) {
     assert(IS_ALIGNED(cipherKey, 16));
     const void *cipherKey2 = (const char *) cipherKey + 16;
@@ -62,6 +63,7 @@ inline void aes_keygen(__m128i rk[], const void* cipherKey) {
     rk[14] = KEYEXP256(rk[12], rk[13], 0x40);
 }
 
+extern inline void aes_encrypt_num(__m128i ek[], uint64_t in, __uint128_t* out);
 inline void aes_encrypt_num(__m128i ek[], uint64_t in, __uint128_t* out) {
     assert(IS_ALIGNED(out, 16));
     // Confusingly, this uses little-endian, so we have to reverse all our numbers as we insert them
@@ -342,9 +344,25 @@ void print128(__uint128_t val) {
 
 
 void test() {
-    A[0] = 1;
+    A[0] = 0;
     B[0] = 255;
     difficulty = 102;
+
+
+    __m128i __attribute__((aligned(16))) ek[15];
+    aes_keygen(ek, A);
+
+    __uint128_t res;
+    aes_encrypt_num(ek, 0, &res);
+
+    __uint128_t res2;
+    aes_encrypt_num(ek, ((uint64_t)5e9), &res2);
+
+    print128(res);
+    print128(res2);
+
+    print128(res + res2);
+    exit(0);
 
     compute_aes();
     bucket_aes();
@@ -356,19 +374,6 @@ void test() {
     exit(0);
 
 
-    __m128i __attribute__((aligned(16))) ek[15];
-    aes_keygen(ek, A);
-
-    __uint128_t res;
-    aes_encrypt_num(ek, 1, &res);
-
-    __uint128_t res2;
-    aes_encrypt_num(ek, 2, &res2);
-
-    print128(res);
-    print128(res2);
-
-    print128(res + res2);
 }
 
 
@@ -382,6 +387,7 @@ int main(int argc, char *argv[]) {
 
     if (argc == 2 && argv[1][0] == 't') {
         test();
+        return 0;
     }
 
     if (argc != 4) {
