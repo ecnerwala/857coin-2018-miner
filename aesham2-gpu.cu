@@ -7,7 +7,8 @@
 #include <emmintrin.h>
 
 #include <cstdint>
-#include <iostream>
+#include <cstdio>
+#include <cinttypes>
 
 // Macro to catch CUDA errors in CUDA runtime calls
 #define CUDA_SAFE_CALL(call) \
@@ -19,6 +20,32 @@ do { \
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+inline struct timespec time_diff(struct timespec start, struct timespec end) {
+    struct timespec diff;
+    if ((end.tv_nsec-start.tv_nsec)<0) {
+        diff.tv_sec = end.tv_sec-start.tv_sec-1;
+        diff.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+    } else {
+        diff.tv_sec = end.tv_sec-start.tv_sec;
+        diff.tv_nsec = end.tv_nsec-start.tv_nsec;
+    }
+    return diff;
+}
+
+inline void fprint_time(FILE *stream, struct timespec t) {
+    fprintf(stream, "%3ld.%09ld", t.tv_sec, t.tv_nsec);
+}
+
+struct timespec program_start_time;
+
+inline void fprint_timestamp(FILE *stream) {
+    struct timespec current_time;
+    clock_gettime(CLOCK_REALTIME, &current_time);
+    struct timespec diff = time_diff(program_start_time, current_time);
+    fprint_time(stream, diff);
+    fprintf(stream, ": ");
+}
 
 using aes_block = uint4;
 
@@ -269,9 +296,19 @@ uint64_t host_nonce1, host_nonce2;
 void go() {
     static uint64_t nonce_start = 0;
     while (true) {
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "START: Computing AES from %" PRIu64 "\n", nonce_start);
+
         compute_aes_kernel<<<256, 256>>>(nonce_start);
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
         nonce_start += (uint64_t(MEM_SIZE) << FILTER_BITS) * 4; // *4 to be conservative
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "FINISH: Computed AES up to %" PRIu64 "\n", nonce_start);
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "START: Bucketing %u items into %u buckets\n", MEM_SIZE, NUM_BUCKETS);
 
         thrust::sort_by_key (
                 thrust::device_symbol<unsigned int>(buckets),
@@ -280,16 +317,28 @@ void go() {
                 );
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
+        fprint_timestamp(stderr);
+        fprintf(stderr, "FINISH: Bucketed items\n");
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "START: Finding collisions: %u items in %u buckets (~%u each) with ~%llu checks\n", MEM_SIZE, NUM_BUCKETS, MEM_SIZE / NUM_BUCKETS, ((unsigned long long) MEM_SIZE) * (MEM_SIZE / NUM_BUCKETS));
+
         check_pairs_kernel<<<256, 256>>>();
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
         unsigned int is_done;
         CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&is_done, num_results, sizeof(num_results)));
         if (is_done) {
+            fprint_timestamp(stderr);
+            fprintf(stderr, "FINISH: Found a collision!\n");
+
             CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&host_nonce1, nonce1, sizeof(nonce1)));
             CUDA_SAFE_CALL(cudaMemcpyFromSymbol(&host_nonce2, nonce2, sizeof(nonce2)));
             break;
         }
+
+        fprint_timestamp(stderr);
+        fprintf(stderr, "FINISH: Found no collisions\n");
     }
 }
 
@@ -307,9 +356,7 @@ void parse_hex(const char s[], uint8_t v[]) {
 }
 
 int main(int argc, char *argv[]) {
-    int major = THRUST_MAJOR_VERSION;
-    int minor = THRUST_MINOR_VERSION;
-    std::cout << "Thrust v" << major << "." << minor << std::endl;
+    clock_gettime(CLOCK_REALTIME, &program_start_time);
 
     if (!__get_cpuid_aes()) {
         fprintf(stderr, "AES-NI not supported on this CPU!\n");
