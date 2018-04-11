@@ -248,7 +248,7 @@ __global__ void check_pairs_kernel() {
     uint start_index = MEM_SIZE / gridDim.x * blockIdx.x;
     uint end_index = MEM_SIZE / gridDim.x * (blockIdx.x + 1);
     for (uint i = start_index + threadIdx.x; num_results == 0 && i < end_index; i += blockDim.x) {
-        for (uint j = i + 1; j < end_index; j ++) {
+        for (uint j = i + 1; j < end_index && buckets[j] == buckets[i]; j ++) {
             if (check_pair(i, j)) {
                 return;
             }
